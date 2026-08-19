@@ -1,3 +1,5 @@
+https://github.com/sibercat/Pippi-HotFix/releases/download/1/Pippi.pak
+
 Conan Exiles build 5.6.1-373004 relocated two engine functions that Pippi 4.0.6 calls. The mod still looks for them at their old address, finds nothing, and the game dies instantly. Four eight-byte values in the mod's cooked data repair it.
 
 Funcom added Stable ID variants of the character and inventory loaders. Rather than duplicate the result-handling logic into the new classes, they hoisted it into a shared base class. The functions were not deleted and not renamed — the names are byte-identical. They changed owner.
