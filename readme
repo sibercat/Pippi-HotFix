@@ -1,0 +1,1 @@
+Conan Exiles build 5.6.1-373004 relocated two engine functions that Pippi 4.0.6 calls. The mod still looks for them at their old address, finds nothing, and the game dies instantly. Four eight-byte values in the mod's cooked data repair it.
