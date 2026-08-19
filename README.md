@@ -4,8 +4,10 @@ Conan Exiles build 5.6.1-373004 relocated two engine functions that Pippi 4.0.6 
 
 Funcom added Stable ID variants of the character and inventory loaders. Rather than duplicate the result-handling logic into the new classes, they hoisted it into a shared base class. The functions were not deleted and not renamed — the names are byte-identical. They changed owner.
 
-
 ![image](https://github.com/sibercat/Pippi-HotFix/blob/main/change.png)
 
 That is normally a harmless refactor. It is fatal here because of how cooked content stores a reference to engine code. In an IoStore package, a script import is not a name lookup — it is a CityHash64 of the function's full object path. Move a function to a different class and the hash becomes unrelated:
 ![image](https://github.com/sibercat/Pippi-HotFix/blob/main/chage2.png)
+
+
+There is no name-based fallback and no redirector for script imports. The loader hashes, misses, and stores null — silently, with no warning in the log. The Blueprint VM then reaches an EX_CallMath instruction holding that null function pointer and dereferences it at offset +0x20 to find its owning class. Hence an access violation reading address 0x20: the offset is the null pointer plus the field it tried to read.
