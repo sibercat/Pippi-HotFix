@@ -13,3 +13,12 @@ That is normally a harmless refactor. It is fatal here because of how cooked con
 
 
 There is no name-based fallback and no redirector for script imports. The loader hashes, misses, and stores null — silently, with no warning in the log. The Blueprint VM then reaches an EX_CallMath instruction holding that null function pointer and dereferences it at offset +0x20 to find its owning class. Hence an access violation reading address 0x20: the offset is the null pointer plus the field it tried to read.
+
+### What the fix does
+
+Four import-table entries — one per affected Blueprint package — are repointed to the new path hashes, across all three platform containers in the mod:
+![image](https://github.com/sibercat/Pippi-HotFix/blob/main/chage3.png)
+
+Eight bytes each, same size, in a package header. No bytecode is modified and no script offset moves, so no jump target, skip offset, or switch table is disturbed. It is also semantically exact rather than a workaround: the same function runs with the same signature, named at its new location. Because the old proxy classes inherit from the new base classes, this is the identical code that was always executing.
+
+![image](https://github.com/sibercat/Pippi-HotFix/blob/main/chage4.png)
