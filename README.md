@@ -4,3 +4,6 @@ Funcom added Stable ID variants of the character and inventory loaders. Rather t
 
 
 ![image](https://github.com/sibercat/Pippi-HotFix/blob/main/change.png)
+
+That is normally a harmless refactor. It is fatal here because of how cooked content stores a reference to engine code. In an IoStore package, a script import is not a name lookup — it is a CityHash64 of the function's full object path. Move a function to a different class and the hash becomes unrelated:
+![image](https://github.com/sibercat/Pippi-HotFix/blob/main/chage2.png)
