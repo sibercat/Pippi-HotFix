@@ -50,8 +50,8 @@ Nothing is lost: no character, building, or inventory data is touched.
 Pippi.pak         47,969,641 bytes
   sha256  2c3f49638decf3542f0c757b3a16f569a0576cbc39941890b149c30355e1521f
 
-PippiHotFix-Installer.exe       25,600 bytes
-  sha256  7f7a496b6852170d9ebfae6e7ee31b989a9f352127724d1574a6a38d765083bb
+PippiHotFix-Installer.exe       28,672 bytes
+  sha256  5e68b6ac7f4b0df127e804fb1188857d848e0ed238d00dd7c370329442fad1a6
 ```
 
 On Windows:
@@ -88,6 +88,30 @@ built into Windows 10 and 11.
 
 It reads this repository's releases feed, so a future hot fix needs a new
 release, not a new installer.
+
+## Safety behaviour
+
+The installer will not quietly replace a Pippi it does not recognise. It reads
+every release this project has published, not just the newest, so it can tell
+an older hot fix apart from a file it has never seen:
+
+| What you have | What it does |
+| --- | --- |
+| The broken Workshop file | Offers the fix |
+| An older hot fix from here | Offers the update |
+| The newest hot fix | Says you are up to date |
+| Anything else | Warns that it looks like a different version of Pippi and asks before touching it |
+
+That last row matters once Pippi is updated officially: an official build is a
+file the installer has never seen, so instead of downgrading you back to this
+stopgap it stops and asks.
+
+### Retiring this fix
+
+When Pippi is fixed properly, put **`[RETIRED]`** in the newest release's title.
+Every installer then reports that the fix is no longer needed and refuses to
+install, pointing people at **Restore original file** instead. Removing the
+`Pippi.pak` asset from the newest release has the same effect.
 
 ## Credits and scope
 
