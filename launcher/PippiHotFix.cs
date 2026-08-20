@@ -43,7 +43,7 @@ namespace PippiHotFix
         public const string WorkshopId = "3725018456";
         public const string PakName = "Pippi.pak";
         public const string ReleaseApi =
-            "https://api.github.com/repos/sibercat/Pippi-HotFix/releases/latest";
+            "https://api.github.com/repos/sibercat/Pippi-HotFix/releases?per_page=30";
         public const string ReleasePage =
             "https://github.com/sibercat/Pippi-HotFix/releases";
 
@@ -54,7 +54,7 @@ namespace PippiHotFix
         public const long StockSize = 45970706L;
     }
 
-    enum State { NoFile, Stock, UpToDate, Outdated, Unknown, Offline }
+    enum State { NoFile, Stock, UpToDate, Outdated, Foreign, Retired, Offline }
 
     class Release
     {
@@ -64,6 +64,21 @@ namespace PippiHotFix
         public long Size;
         public string Sha256 = "";
         public bool Ok { get { return Url.Length > 0; } }
+    }
+
+    // Every hotfix this project has ever published, not just the newest.
+    //
+    // Without the history we cannot tell an older hotfix apart from a file we
+    // have never seen - and "never seen" is most likely an official Pippi
+    // update. Overwriting that with this stopgap would be a silent downgrade,
+    // so an unrecognised file is never replaced without the user agreeing to it.
+    class Catalog
+    {
+        public Release Latest = new Release();
+        public HashSet<string> Known =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        public bool Retired;
+        public bool Ok { get { return Latest.Ok; } }
     }
 
     static class Steam
@@ -199,10 +214,10 @@ namespace PippiHotFix
 
     static class Github
     {
-        public static Release Latest(out string error)
+        public static Catalog Fetch(out string error)
         {
             error = null;
-            var r = new Release();
+            var cat = new Catalog();
             try
             {
                 try
@@ -228,36 +243,60 @@ namespace PippiHotFix
 
                 var ser = new JavaScriptSerializer();
                 ser.MaxJsonLength = int.MaxValue;
-                var root = (Dictionary<string, object>)ser.DeserializeObject(json);
+                var releases = ser.DeserializeObject(json) as object[];
+                if (releases == null) { error = "Unexpected response from GitHub."; return cat; }
 
-                r.Tag = Str(root, "tag_name");
-                r.Name = Str(root, "name");
-
-                var assets = root.ContainsKey("assets") ? root["assets"] as object[] : null;
-                if (assets != null)
+                foreach (var relObj in releases)          // newest first
                 {
-                    foreach (var a in assets)
+                    var rel = relObj as Dictionary<string, object>;
+                    if (rel == null) continue;
+                    if (Str(rel, "draft").Equals("True", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var pak = new Release
                     {
-                        var d = a as Dictionary<string, object>;
-                        if (d == null) continue;
-                        if (!string.Equals(Str(d, "name"), Cfg.PakName,
-                                           StringComparison.OrdinalIgnoreCase)) continue;
-                        r.Url = Str(d, "browser_download_url");
-                        long sz;
-                        if (long.TryParse(Str(d, "size"), out sz)) r.Size = sz;
-                        var dg = Str(d, "digest");
-                        if (dg.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
-                            r.Sha256 = dg.Substring(7).ToLowerInvariant();
-                        break;
+                        Tag = Str(rel, "tag_name"),
+                        Name = Str(rel, "name")
+                    };
+                    var assets = rel.ContainsKey("assets") ? rel["assets"] as object[] : null;
+                    if (assets != null)
+                    {
+                        foreach (var a in assets)
+                        {
+                            var d = a as Dictionary<string, object>;
+                            if (d == null) continue;
+                            if (!string.Equals(Str(d, "name"), Cfg.PakName,
+                                               StringComparison.OrdinalIgnoreCase)) continue;
+                            pak.Url = Str(d, "browser_download_url");
+                            long sz;
+                            if (long.TryParse(Str(d, "size"), out sz)) pak.Size = sz;
+                            var dg = Str(d, "digest");
+                            if (dg.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                pak.Sha256 = dg.Substring(7).ToLowerInvariant();
+                                cat.Known.Add(pak.Sha256);
+                            }
+                            break;
+                        }
+                    }
+
+                    bool prerelease = Str(rel, "prerelease")
+                        .Equals("True", StringComparison.OrdinalIgnoreCase);
+                    if (!cat.Ok && !prerelease && pak.Ok)
+                    {
+                        cat.Latest = pak;
+                        var marker = (pak.Name + " " + Str(rel, "body")).ToUpperInvariant();
+                        cat.Retired = marker.Contains("[RETIRED]");
                     }
                 }
-                if (!r.Ok) error = "The latest release has no " + Cfg.PakName + " attached.";
+                if (!cat.Ok)
+                    error = "No release has a " + Cfg.PakName + " attached.";
             }
             catch (Exception ex)
             {
                 error = ex.Message;
             }
-            return r;
+            return cat;
         }
 
         static string Str(Dictionary<string, object> d, string k)
@@ -279,8 +318,8 @@ namespace PippiHotFix
 
         string _pak;
         string _installedSha = "";
-        Release _latest = new Release();
-        State _state = State.Unknown;
+        Catalog _cat = new Catalog();
+        State _state = State.Offline;
         string _netError;
 
         static readonly Color Ink = Color.FromArgb(24, 28, 31);
@@ -459,7 +498,7 @@ namespace PippiHotFix
 
             _bar.Style = ProgressBarStyle.Continuous;
             _installedSha = Util.Sha256(_pak, p => { _bar.Value = Math.Min(p, 100); Application.DoEvents(); });
-            _latest = Github.Latest(out _netError);
+            _cat = Github.Fetch(out _netError);
             Busy(false, null);
             Evaluate();
         }
@@ -469,7 +508,7 @@ namespace PippiHotFix
             var size = new FileInfo(_pak).Length;
             _restore.Enabled = File.Exists(BackupPath);
 
-            if (!_latest.Ok)
+            if (!_cat.Ok)
             {
                 _state = State.Offline;
                 bool stock = _installedSha == Cfg.StockSha;
@@ -483,11 +522,23 @@ namespace PippiHotFix
                 return;
             }
 
-            if (_installedSha == _latest.Sha256)
+            if (_cat.Retired)
+            {
+                // Pippi has been fixed properly; this project has stood down.
+                _state = State.Retired;
+                SetStatus(Good, "This hot fix is no longer needed",
+                    "Pippi has been updated officially, so the community fix has been retired. "
+                  + "Use Restore original file below, or turn Workshop auto-update back on, and "
+                  + "let Steam install the official version.");
+                _primary.Text = "Open the releases page";
+                return;
+            }
+
+            if (_installedSha == _cat.Latest.Sha256)
             {
                 _state = State.UpToDate;
                 SetStatus(Good, "You are up to date",
-                    "Hot fix " + _latest.Tag + " is installed. Nothing to do \u2014 you can close "
+                    "Hot fix " + _cat.Latest.Tag + " is installed. Nothing to do \u2014 you can close "
                   + "this and play. " + Util.Bytes(size) + ".");
                 _primary.Text = "Re-apply anyway";
             }
@@ -496,22 +547,53 @@ namespace PippiHotFix
                 _state = State.Stock;
                 SetStatus(Bad, "Your Pippi is broken and will crash",
                     "This is the unpatched Workshop file. Press the button below to replace it "
-                  + "with hot fix " + _latest.Tag + ". Your original is kept so you can undo this.");
+                  + "with hot fix " + _cat.Latest.Tag + ". Your original is kept so you can undo this.");
                 _primary.Text = "Fix My Game";
+            }
+            else if (_cat.Known.Contains(_installedSha))
+            {
+                // One of ours, just an older one - safe to move forward.
+                _state = State.Outdated;
+                SetStatus(Warn, "A newer hot fix is available",
+                    "You have an earlier hot fix. Hot fix " + _cat.Latest.Tag + " is available ("
+                  + Util.Bytes(_cat.Latest.Size) + ").");
+                _primary.Text = "Update to hot fix " + _cat.Latest.Tag;
             }
             else
             {
-                _state = State.Outdated;
-                SetStatus(Warn, "A newer hot fix is available",
-                    "You have a patched Pippi, but not the current one. Hot fix " + _latest.Tag
-                  + " is available (" + Util.Bytes(_latest.Size) + ").");
-                _primary.Text = "Update to hot fix " + _latest.Tag;
+                // Not the stock file and not anything we published. Most likely
+                // an official Pippi update, which must not be quietly replaced.
+                _state = State.Foreign;
+                SetStatus(Warn, "This looks like a different version of Pippi",
+                    "Your Pippi is neither the broken file nor any hot fix from this project. "
+                  + "It is probably a newer official release \u2014 if so, you do not need this and "
+                  + "installing it would put you back on an older mod.");
+                _primary.Text = "Install hot fix anyway";
             }
         }
 
         void OnPrimary(object sender, EventArgs e)
         {
             if (_state == State.NoFile || _state == State.Offline) { Refresh_(); return; }
+
+            if (_state == State.Retired)
+            {
+                try { Process.Start(Cfg.ReleasePage); } catch { }
+                return;
+            }
+
+            if (_state == State.Foreign)
+            {
+                var warn = MessageBox.Show(this,
+                    "The Pippi you have is not the broken file, and it is not any hot fix from "
+                  + "this project.\n\nIf Pippi has been updated officially, installing this would "
+                  + "replace a newer mod with an older one, and you would be the only person on "
+                  + "your server running it.\n\nOnly continue if you are sure.\n\nInstall hot fix "
+                  + _cat.Latest.Tag + " over it?",
+                    "This may not be what you want",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+                if (warn != DialogResult.Yes) return;
+            }
 
             if (Util.GameRunning())
             {
@@ -524,7 +606,7 @@ namespace PippiHotFix
             string tmp = Path.Combine(Path.GetTempPath(), "PippiHotFix_" + Guid.NewGuid().ToString("N") + ".pak");
             try
             {
-                Busy(true, "Downloading hot fix " + _latest.Tag + "...");
+                Busy(true, "Downloading hot fix " + _cat.Latest.Tag + "...");
                 _bar.Value = 0;
                 using (var wc = new WebClient())
                 {
@@ -536,7 +618,7 @@ namespace PippiHotFix
                         _bar.Value = Math.Min(e2.ProgressPercentage, 100);
                     };
                     wc.DownloadFileCompleted += (s2, e2) => { err = e2.Error; done = true; };
-                    wc.DownloadFileAsync(new Uri(_latest.Url), tmp);
+                    wc.DownloadFileAsync(new Uri(_cat.Latest.Url), tmp);
                     while (!done) { Application.DoEvents(); Thread.Sleep(30); }
                     if (err != null) throw err;
                 }
@@ -544,12 +626,14 @@ namespace PippiHotFix
                 Busy(true, "Checking the download...");
                 _bar.Value = 0;
                 var got = Util.Sha256(tmp, p => { _bar.Value = Math.Min(p, 100); Application.DoEvents(); });
-                if (_latest.Sha256.Length == 64 && got != _latest.Sha256)
+                if (_cat.Latest.Sha256.Length == 64 && got != _cat.Latest.Sha256)
                     throw new Exception("The downloaded file did not match its published "
                                       + "checksum, so it was not installed. Try again.");
 
                 Busy(true, "Installing...");
-                if (!File.Exists(BackupPath) && _installedSha == Cfg.StockSha)
+                // Keep the first non-ours file we see - that is the real original,
+                // whether it is the broken Workshop file or an official update.
+                if (!File.Exists(BackupPath) && !_cat.Known.Contains(_installedSha))
                     File.Copy(_pak, BackupPath, false);
 
                 Replace(tmp, _pak);
@@ -634,7 +718,7 @@ namespace PippiHotFix
                 Busy(true, "Checking that file...");
                 _bar.Value = 0;
                 _installedSha = Util.Sha256(_pak, p => { _bar.Value = Math.Min(p, 100); Application.DoEvents(); });
-                if (!_latest.Ok) _latest = Github.Latest(out _netError);
+                if (!_cat.Ok) _cat = Github.Fetch(out _netError);
                 Busy(false, null);
                 Evaluate();
             }
@@ -713,18 +797,23 @@ namespace PippiHotFix
             }
 
             string err;
-            var rel = Github.Latest(out err);
-            Console.WriteLine("Latest release: " + (rel.Ok ? rel.Tag + " (" + rel.Name + ")"
+            var cat = Github.Fetch(out err);
+            var rel = cat.Latest;
+            Console.WriteLine("Latest release: " + (cat.Ok ? rel.Tag + " (" + rel.Name + ")"
                                                            : "UNAVAILABLE " + err));
-            if (rel.Ok)
+            if (cat.Ok)
             {
                 Console.WriteLine("   url    " + rel.Url);
                 Console.WriteLine("   size   " + Util.Bytes(rel.Size));
                 Console.WriteLine("   sha256 " + rel.Sha256);
+                Console.WriteLine("   known hotfix builds: " + cat.Known.Count);
+                Console.WriteLine("   retired: " + cat.Retired);
                 if (sha != null)
-                    Console.WriteLine("   verdict " + (sha == rel.Sha256 ? "UP TO DATE"
+                    Console.WriteLine("   verdict " + (cat.Retired ? "RETIRED - do not install"
+                                                     : sha == rel.Sha256 ? "UP TO DATE"
                                                      : sha == Cfg.StockSha ? "NEEDS FIX"
-                                                     : "DIFFERENT BUILD"));
+                                                     : cat.Known.Contains(sha) ? "OLDER HOTFIX"
+                                                     : "FOREIGN - will ask before replacing"));
             }
             Console.WriteLine("Conan running: " + Util.GameRunning());
             return 0;
