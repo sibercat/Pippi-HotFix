@@ -1,4 +1,4 @@
-![Dashboard](https://raw.githubusercontent.com/sibercat/The-Isle-Evrima-Server-Launcher/refs/heads/main/docs/Dashboard.webp)
+![Dashboard](https://github.com/sibercat/Pippi-HotFix/blob/main/docs/Broke.png) ![Dashboard](https://github.com/sibercat/Pippi-HotFix/blob/main/docs/Installed.png)
 
 ## Install
 
