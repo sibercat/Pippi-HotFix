@@ -113,13 +113,6 @@ That last row matters once Pippi is updated officially: an official build is a
 file the installer has never seen, so instead of downgrading you back to this
 stopgap it stops and asks.
 
-### Retiring this fix
-
-When Pippi is fixed properly, put **`[RETIRED]`** in the newest release's title.
-Every installer then reports that the fix is no longer needed and refuses to
-install, pointing people at **Restore original file** instead. Removing the
-`Pippi.pak` asset from the newest release has the same effect.
-
 ## Credits and scope
 
 Pippi is by **Joshtech**. This is an unofficial community stopgap produced while
