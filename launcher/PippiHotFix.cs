@@ -1075,13 +1075,20 @@ namespace PippiHotFix
             return new string[0];
         }
 
-        // Headless check, for testing and for server owners: PippiHotFix.exe /check
-        public static int SelfTest()
+        // Headless check, for server owners and for testing the decision logic
+        // against a throwaway file:
+        //   PippiHotFix-Installer.exe /check [--pak <path>]
+        public static int SelfTest(string handedPak)
         {
             Console.WriteLine("Steam libraries:");
             foreach (var l in Steam.Libraries()) Console.WriteLine("   " + l);
 
-            var pak = Steam.FindPak() ?? LoadRemembered();
+            if (handedPak != null && !File.Exists(handedPak))
+            {
+                Console.WriteLine("Pippi.pak: <not found at " + handedPak + ">");
+                return 3;
+            }
+            var pak = handedPak ?? Steam.FindPak() ?? LoadRemembered();
             Console.WriteLine("Pippi.pak: " + (pak ?? "<not found>"));
             string sha = null;
             if (pak != null && File.Exists(pak))
@@ -1130,6 +1137,17 @@ namespace PippiHotFix
         [STAThread]
         static int Main(string[] args)
         {
+            string handedPak = null;
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (args[i].Equals("--pak", StringComparison.OrdinalIgnoreCase)
+                 || args[i].Equals("/pak", StringComparison.OrdinalIgnoreCase))
+                {
+                    handedPak = args[i + 1];
+                    break;
+                }
+            }
+
             foreach (var a in args)
             {
                 if (a.Equals("/check", StringComparison.OrdinalIgnoreCase)
@@ -1145,18 +1163,7 @@ namespace PippiHotFix
                         Console.SetOut(w);
                     }
                     catch { }
-                    return SelfTest();
-                }
-            }
-
-            string handedPak = null;
-            for (int i = 0; i < args.Length - 1; i++)
-            {
-                if (args[i].Equals("--pak", StringComparison.OrdinalIgnoreCase)
-                 || args[i].Equals("/pak", StringComparison.OrdinalIgnoreCase))
-                {
-                    handedPak = args[i + 1];
-                    break;
+                    return SelfTest(handedPak);
                 }
             }
 
