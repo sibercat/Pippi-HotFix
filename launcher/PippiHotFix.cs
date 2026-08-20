@@ -25,9 +25,15 @@ using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
-[assembly: AssemblyTitle("Pippi Hot Fix")]
+// Shown in the file's Properties -> Details tab. An unsigned executable with
+// blank metadata is one of the things a careful user checks, so fill it in.
+[assembly: AssemblyTitle("Pippi Hot Fix Installer")]
+[assembly: AssemblyDescription("Installs the community hot fix for the Pippi mod for Conan Exiles")]
 [assembly: AssemblyProduct("Pippi Hot Fix")]
+[assembly: AssemblyCompany("sibercat")]
+[assembly: AssemblyCopyright("Unofficial community stopgap. Pippi is by Joshtech.")]
 [assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
 
 namespace PippiHotFix
 {
