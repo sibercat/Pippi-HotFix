@@ -12,7 +12,7 @@ REM MVID and timestamp into every build - so the exe works but its hash will
 REM NOT match the published one.
 SETLOCAL ENABLEDELAYEDEXPANSION
 
-SET "OUT=PippiHotFix.exe"
+SET "OUT=PippiHotFix-Installer.exe"
 SET "REFS=%ProgramFiles(x86)%\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8"
 
 SET "ROSLYN="
