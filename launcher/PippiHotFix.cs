@@ -82,51 +82,99 @@ namespace PippiHotFix
 
     static class Steam
     {
-        static string RegPath()
+        // Current layout:  "path"  "D:\\SteamLibrary"
+        static readonly Regex PathEntry =
+            new Regex("\"path\"\\s*\"([^\"]+)\"", RegexOptions.IgnoreCase);
+        // Pre-2021 layout: "1"  "D:\\SteamLibrary". The value must look like a
+        // path, or this would also match the numeric "apps" size entries.
+        static readonly Regex LegacyEntry =
+            new Regex("\"\\d+\"\\s*\"([A-Za-z]:\\\\[^\"]*|\\\\\\\\[^\"]+)\"");
+
+        // Where Steam itself lives. HKCU is the usual answer, but it only exists
+        // once Steam has run for this user - so an all-users install, or the
+        // different account an elevated relaunch may land in, needs HKLM too.
+        static IEnumerable<string> InstallRoots()
         {
-            foreach (var view in new[] { Microsoft.Win32.RegistryView.Registry64,
-                                         Microsoft.Win32.RegistryView.Registry32 })
+            var views = new[] { Microsoft.Win32.RegistryView.Registry64,
+                                Microsoft.Win32.RegistryView.Registry32 };
+            var probes = new[]
             {
-                try
+                new { Hive = Microsoft.Win32.RegistryHive.CurrentUser,
+                      Key = @"Software\Valve\Steam", Value = "SteamPath" },
+                new { Hive = Microsoft.Win32.RegistryHive.LocalMachine,
+                      Key = @"SOFTWARE\Valve\Steam", Value = "InstallPath" },
+                new { Hive = Microsoft.Win32.RegistryHive.LocalMachine,
+                      Key = @"SOFTWARE\WOW6432Node\Valve\Steam", Value = "InstallPath" },
+            };
+            foreach (var probe in probes)
+                foreach (var view in views)
                 {
-                    using (var b = Microsoft.Win32.RegistryKey.OpenBaseKey(
-                               Microsoft.Win32.RegistryHive.CurrentUser, view))
-                    using (var k = b.OpenSubKey(@"Software\Valve\Steam"))
+                    string v = null;
+                    try
                     {
-                        if (k == null) continue;
-                        var v = k.GetValue("SteamPath") as string;
-                        if (!string.IsNullOrEmpty(v))
-                            return v.Replace('/', '\\');
+                        using (var b = Microsoft.Win32.RegistryKey.OpenBaseKey(probe.Hive, view))
+                        using (var k = b.OpenSubKey(probe.Key))
+                            if (k != null) v = k.GetValue(probe.Value) as string;
                     }
+                    catch { }
+                    if (!string.IsNullOrEmpty(v)) yield return v.Replace('/', '\\');
                 }
-                catch { }
-            }
-            return null;
         }
 
         // Every Steam library on the machine, not just the default one.
         public static List<string> Libraries()
         {
+            // Windows paths are case-insensitive; comparing them case-sensitively
+            // lists the same library twice whenever the registry and the vdf
+            // disagree about capitalisation.
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var libs = new List<string>();
-            var root = RegPath();
-            if (string.IsNullOrEmpty(root)) return libs;
-            libs.Add(root);
 
-            foreach (var vdf in new[] { Path.Combine(root, @"steamapps\libraryfolders.vdf"),
-                                        Path.Combine(root, @"config\libraryfolders.vdf") })
+            Action<string> add = p =>
             {
-                try
+                if (string.IsNullOrEmpty(p)) return;
+                p = p.TrimEnd('\\');
+                if (seen.Add(p)) libs.Add(p);
+            };
+
+            var roots = new List<string>(InstallRoots());
+            foreach (var root in roots) add(root);
+
+            foreach (var root in roots)
+            {
+                foreach (var vdf in new[] { Path.Combine(root, @"steamapps\libraryfolders.vdf"),
+                                            Path.Combine(root, @"config\libraryfolders.vdf") })
                 {
-                    if (!File.Exists(vdf)) continue;
-                    var text = File.ReadAllText(vdf);
-                    foreach (Match m in Regex.Matches(text, "\"path\"\\s*\"([^\"]+)\"",
-                                                      RegexOptions.IgnoreCase))
+                    try
                     {
-                        var p = m.Groups[1].Value.Replace(@"\\", @"\");
-                        if (!libs.Contains(p)) libs.Add(p);
+                        if (!File.Exists(vdf)) continue;
+                        var text = File.ReadAllText(vdf);
+                        foreach (Match m in PathEntry.Matches(text))
+                            add(m.Groups[1].Value.Replace(@"\\", @"\"));
+                        foreach (Match m in LegacyEntry.Matches(text))
+                            add(m.Groups[1].Value.Replace(@"\\", @"\"));
                     }
+                    catch { }
                 }
-                catch { }
+            }
+
+            // Last resort for a stale or missing registry: the two folder names
+            // Steam actually uses, on every fixed drive.
+            if (libs.Count == 0)
+            {
+                foreach (var drive in DriveInfo.GetDrives())
+                {
+                    try
+                    {
+                        if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
+                        foreach (var name in new[] { "SteamLibrary", "Steam" })
+                        {
+                            var p = Path.Combine(drive.RootDirectory.FullName, name);
+                            if (Directory.Exists(Path.Combine(p, "steamapps"))) add(p);
+                        }
+                    }
+                    catch { }
+                }
             }
             return libs;
         }
