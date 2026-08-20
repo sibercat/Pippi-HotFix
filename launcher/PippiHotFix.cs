@@ -4,11 +4,10 @@
 // GitHub release, and swaps it in. The release API is the single source of
 // truth: a new hotfix needs a new release, not a new build of this program.
 //
-// Build (no SDK required - the compiler ships with Windows):
-//   C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe
-//     /out:PippiHotFix.exe PippiHotFix.cs
-//     /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll
-//     /r:System.Web.Extensions.dll
+// Build with build.bat. It prefers the Roslyn compiler from any installed .NET
+// SDK with -deterministic, so the build is reproducible and the published exe
+// can be checked against its SHA-256. It falls back to the compiler that ships
+// with Windows, which works but is not hash-reproducible.
 
 using System;
 using System.Collections.Generic;
@@ -43,7 +42,7 @@ namespace PippiHotFix
         public const string WorkshopId = "3725018456";
         public const string PakName = "Pippi.pak";
         public const string ReleaseApi =
-            "https://api.github.com/repos/sibercat/Pippi-HotFix/releases?per_page=30";
+            "https://api.github.com/repos/sibercat/Pippi-HotFix/releases?per_page=100";
         public const string ReleasePage =
             "https://github.com/sibercat/Pippi-HotFix/releases";
 
@@ -246,6 +245,7 @@ namespace PippiHotFix
                 var releases = ser.DeserializeObject(json) as object[];
                 if (releases == null) { error = "Unexpected response from GitHub."; return cat; }
 
+                bool sawNewest = false;
                 foreach (var relObj in releases)          // newest first
                 {
                     var rel = relObj as Dictionary<string, object>;
@@ -282,12 +282,20 @@ namespace PippiHotFix
 
                     bool prerelease = Str(rel, "prerelease")
                         .Equals("True", StringComparison.OrdinalIgnoreCase);
-                    if (!cat.Ok && !prerelease && pak.Ok)
+                    if (prerelease) continue;
+
+                    // Read the retirement marker from the newest real release
+                    // whether or not it carries a pak. Standing the project down
+                    // by publishing a release with no download is the obvious
+                    // thing to do, and it must not go unnoticed.
+                    if (!sawNewest)
                     {
-                        cat.Latest = pak;
+                        sawNewest = true;
                         var marker = (pak.Name + " " + Str(rel, "body")).ToUpperInvariant();
                         cat.Retired = marker.Contains("[RETIRED]");
                     }
+
+                    if (!cat.Ok && pak.Ok) cat.Latest = pak;
                 }
                 if (!cat.Ok)
                     error = "No release has a " + Cfg.PakName + " attached.";
@@ -317,6 +325,7 @@ namespace PippiHotFix
         Label _note;
 
         string _pak;
+        readonly string _handedPak;
         string _installedSha = "";
         Catalog _cat = new Catalog();
         State _state = State.Offline;
@@ -329,8 +338,11 @@ namespace PippiHotFix
         static readonly Color Warn = Color.FromArgb(158, 96, 30);
         static readonly Color Face = Color.FromArgb(246, 247, 246);
 
-        public MainForm()
+        public MainForm() : this(null) { }
+
+        public MainForm(string handedPak)
         {
+            _handedPak = handedPak;
             Text = "Pippi Hot Fix";
             ClientSize = new Size(600, 430);
             FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -453,6 +465,7 @@ namespace PippiHotFix
             Controls.Add(_note);
 
             Shown += (s, e) => Refresh_();
+            FormClosing += (s, e) => { _closing = true; };
         }
 
         string BackupPath { get { return _pak == null ? null : _pak + ".original"; } }
@@ -465,8 +478,23 @@ namespace PippiHotFix
             _pathLabel.Text = _pak ?? "";
         }
 
+        bool _closing;
+
+        // Hashing and downloading pump messages, so the window can be closed
+        // mid-operation. Touching disposed controls after that throws from a
+        // callback and takes the process down.
+        void Progress(int pct)
+        {
+            if (_closing || IsDisposed || _bar == null || _bar.IsDisposed) return;
+            _bar.Value = Math.Min(Math.Max(pct, 0), 100);
+            Application.DoEvents();
+        }
+
+        bool Alive { get { return !_closing && !IsDisposed; } }
+
         void Busy(bool on, string label)
         {
+            if (!Alive) return;
             _primary.Enabled = _browse.Enabled = _restore.Enabled = !on;
             _bar.Visible = on;
             if (on) { _headline.ForeColor = Ink; _headline.Text = label; }
@@ -476,7 +504,7 @@ namespace PippiHotFix
         void Refresh_()
         {
             Busy(true, "Looking for Pippi...");
-            _pak = Steam.FindPak();
+            _pak = (_handedPak != null && File.Exists(_handedPak)) ? _handedPak : Steam.FindPak();
             if (_pak == null)
             {
                 var remembered = LoadRemembered();
@@ -497,7 +525,24 @@ namespace PippiHotFix
             }
 
             _bar.Style = ProgressBarStyle.Continuous;
-            _installedSha = Util.Sha256(_pak, p => { _bar.Value = Math.Min(p, 100); Application.DoEvents(); });
+            try
+            {
+                _installedSha = Util.Sha256(_pak, Progress);
+            }
+            catch (Exception ex)
+            {
+                // Locked by Steam, denied by an ACL, on a disconnected drive.
+                // Running from Shown, an escape here would kill the program
+                // before the window ever appeared.
+                _state = State.NoFile;
+                Busy(false, null);
+                SetStatus(Bad, "Could not read your Pippi file",
+                    "Found it at the path below, but could not open it: " + ex.Message
+                  + "  Close Steam and Conan Exiles and try again.");
+                _primary.Text = "Try again";
+                _restore.Enabled = false;
+                return;
+            }
             _cat = Github.Fetch(out _netError);
             Busy(false, null);
             Evaluate();
@@ -505,7 +550,23 @@ namespace PippiHotFix
 
         void Evaluate()
         {
-            var size = new FileInfo(_pak).Length;
+            long size;
+            try
+            {
+                size = new FileInfo(_pak).Length;
+            }
+            catch (Exception)
+            {
+                // Evaluate() also runs from the failure path of an install, so
+                // it has to cope with the file having gone missing.
+                _state = State.NoFile;
+                SetStatus(Bad, "Pippi is no longer where it was",
+                    "The file has moved or been removed since this window opened. "
+                  + "Search again, or point at it yourself.");
+                _primary.Text = "Search again";
+                _restore.Enabled = _pak != null && File.Exists(BackupPath);
+                return;
+            }
             _restore.Enabled = File.Exists(BackupPath);
 
             if (!_cat.Ok)
@@ -542,14 +603,6 @@ namespace PippiHotFix
                   + "this and play. " + Util.Bytes(size) + ".");
                 _primary.Text = "Re-apply anyway";
             }
-            else if (_installedSha == Cfg.StockSha || size == Cfg.StockSize)
-            {
-                _state = State.Stock;
-                SetStatus(Bad, "Your Pippi is broken and will crash",
-                    "This is the unpatched Workshop file. Press the button below to replace it "
-                  + "with hot fix " + _cat.Latest.Tag + ". Your original is kept so you can undo this.");
-                _primary.Text = "Fix My Game";
-            }
             else if (_cat.Known.Contains(_installedSha))
             {
                 // One of ours, just an older one - safe to move forward.
@@ -558,6 +611,14 @@ namespace PippiHotFix
                     "You have an earlier hot fix. Hot fix " + _cat.Latest.Tag + " is available ("
                   + Util.Bytes(_cat.Latest.Size) + ").");
                 _primary.Text = "Update to hot fix " + _cat.Latest.Tag;
+            }
+            else if (_installedSha == Cfg.StockSha)
+            {
+                _state = State.Stock;
+                SetStatus(Bad, "Your Pippi is broken and will crash",
+                    "This is the unpatched Workshop file. Press the button below to replace it "
+                  + "with hot fix " + _cat.Latest.Tag + ". Your original is kept so you can undo this.");
+                _primary.Text = "Fix My Game";
             }
             else
             {
@@ -613,28 +674,45 @@ namespace PippiHotFix
                     wc.Headers.Add("User-Agent", "PippiHotFix");
                     bool done = false;
                     Exception err = null;
-                    wc.DownloadProgressChanged += (s2, e2) =>
-                    {
-                        _bar.Value = Math.Min(e2.ProgressPercentage, 100);
-                    };
+                    wc.DownloadProgressChanged += (s2, e2) => Progress(e2.ProgressPercentage);
                     wc.DownloadFileCompleted += (s2, e2) => { err = e2.Error; done = true; };
                     wc.DownloadFileAsync(new Uri(_cat.Latest.Url), tmp);
-                    while (!done) { Application.DoEvents(); Thread.Sleep(30); }
+                    while (!done && Alive) { Application.DoEvents(); Thread.Sleep(30); }
+                    if (!Alive) { wc.CancelAsync(); return; }
                     if (err != null) throw err;
                 }
 
                 Busy(true, "Checking the download...");
                 _bar.Value = 0;
-                var got = Util.Sha256(tmp, p => { _bar.Value = Math.Min(p, 100); Application.DoEvents(); });
-                if (_cat.Latest.Sha256.Length == 64 && got != _cat.Latest.Sha256)
-                    throw new Exception("The downloaded file did not match its published "
-                                      + "checksum, so it was not installed. Try again.");
+                var got = Util.Sha256(tmp, Progress);
+                if (_cat.Latest.Sha256.Length == 64)
+                {
+                    if (got != _cat.Latest.Sha256)
+                        throw new Exception("The downloaded file did not match its published "
+                                          + "checksum, so it was not installed. Try again.");
+                }
+                else
+                {
+                    // No digest published: fall back to the declared size so a
+                    // truncated download still cannot be installed silently.
+                    var downloaded = new FileInfo(tmp).Length;
+                    if (_cat.Latest.Size > 0 && downloaded != _cat.Latest.Size)
+                        throw new Exception("The download was incomplete, so it was not "
+                                          + "installed. Try again.");
+                    // Adopt it as the expected hash, or the file we just wrote
+                    // would read back as an unrecognised version of Pippi.
+                    _cat.Latest.Sha256 = got;
+                    _cat.Known.Add(got);
+                }
 
                 Busy(true, "Installing...");
-                // Keep the first non-ours file we see - that is the real original,
-                // whether it is the broken Workshop file or an official update.
-                if (!File.Exists(BackupPath) && !_cat.Known.Contains(_installedSha))
-                    File.Copy(_pak, BackupPath, false);
+                // Keep the most recent file that is not one of ours - that is the
+                // real original, whether it is the broken Workshop file or an
+                // official update. Refreshing it matters: if someone installs over
+                // an official Pippi, a stale backup would "restore" them to the
+                // broken file instead.
+                if (!_cat.Known.Contains(_installedSha))
+                    File.Copy(_pak, BackupPath, true);
 
                 Replace(tmp, _pak);
                 int cleared = Util.ClearExtractedMods(_pak);
@@ -666,19 +744,51 @@ namespace PippiHotFix
             }
         }
 
+        // Never leave the Workshop folder without a Pippi.pak.
+        //
+        // Deleting the destination and then moving is the obvious way to do
+        // this and the wrong one: if the move fails - antivirus, a lock, a full
+        // disk - the mod is simply gone and the player has no idea why.
+        // File.Replace swaps in one step and leaves the destination untouched
+        // if it fails. The fallback for filesystems without it keeps a rescue
+        // copy so a failed move can still be undone.
         static void Replace(string src, string dst)
         {
             var staged = dst + ".new";
-            File.Copy(src, staged, true);
+            var rescue = dst + ".rescue";
             try
             {
-                File.Delete(dst);
-                File.Move(staged, dst);
+                File.Copy(src, staged, true);
+
+                if (!File.Exists(dst))
+                {
+                    File.Move(staged, dst);
+                    return;
+                }
+
+                try
+                {
+                    File.Replace(staged, dst, null);
+                }
+                catch (Exception)
+                {
+                    File.Copy(dst, rescue, true);
+                    try
+                    {
+                        File.Delete(dst);
+                        File.Move(staged, dst);
+                    }
+                    catch
+                    {
+                        if (!File.Exists(dst)) File.Copy(rescue, dst, false);
+                        throw;
+                    }
+                }
             }
-            catch
+            finally
             {
                 try { if (File.Exists(staged)) File.Delete(staged); } catch { }
-                throw;
+                try { if (File.Exists(rescue)) File.Delete(rescue); } catch { }
             }
         }
 
@@ -691,10 +801,15 @@ namespace PippiHotFix
             if (r != DialogResult.Yes) return;
             try
             {
+                // Hand over the path we already resolved. An elevated process
+                // may run as a different account, where neither the Steam
+                // registry key nor our remembered path exists - it would come
+                // up saying Pippi was not found.
                 var psi = new ProcessStartInfo(Application.ExecutablePath)
                 {
                     UseShellExecute = true,
-                    Verb = "runas"
+                    Verb = "runas",
+                    Arguments = _pak == null ? "" : "--pak \"" + _pak + "\""
                 };
                 Process.Start(psi);
                 Close();
@@ -717,7 +832,7 @@ namespace PippiHotFix
                 SaveRemembered(_pak);
                 Busy(true, "Checking that file...");
                 _bar.Value = 0;
-                _installedSha = Util.Sha256(_pak, p => { _bar.Value = Math.Min(p, 100); Application.DoEvents(); });
+                _installedSha = Util.Sha256(_pak, Progress);
                 if (!_cat.Ok) _cat = Github.Fetch(out _netError);
                 Busy(false, null);
                 Evaluate();
@@ -744,7 +859,7 @@ namespace PippiHotFix
                 Util.ClearExtractedMods(_pak);
                 Busy(true, "Checking...");
                 _bar.Value = 0;
-                _installedSha = Util.Sha256(_pak, p => { _bar.Value = Math.Min(p, 100); Application.DoEvents(); });
+                _installedSha = Util.Sha256(_pak, Progress);
                 Busy(false, null);
                 Evaluate();
             }
@@ -816,7 +931,11 @@ namespace PippiHotFix
                                                      : "FOREIGN - will ask before replacing"));
             }
             Console.WriteLine("Conan running: " + Util.GameRunning());
-            return 0;
+            // 0 nothing to do, 1 needs fixing, 2 cannot tell, 3 no Pippi found
+            if (pak == null || sha == null) return 3;
+            if (!cat.Ok) return 2;
+            if (cat.Retired || sha == rel.Sha256) return 0;
+            return 1;
         }
 
         [STAThread]
@@ -840,9 +959,21 @@ namespace PippiHotFix
                     return SelfTest();
                 }
             }
+
+            string handedPak = null;
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (args[i].Equals("--pak", StringComparison.OrdinalIgnoreCase)
+                 || args[i].Equals("/pak", StringComparison.OrdinalIgnoreCase))
+                {
+                    handedPak = args[i + 1];
+                    break;
+                }
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainForm());
+            Application.Run(new MainForm(handedPak));
             return 0;
         }
 
