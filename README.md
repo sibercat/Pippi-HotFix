@@ -61,7 +61,7 @@ certutil -hashfile Pippi.pak SHA256
 certutil -hashfile PippiHotFix-Installer.exe SHA256
 ```
 
-### Don't trust me — rebuild the installer
+### You can rebuild the installer
 
 The installer's full source is in [`launcher/`](launcher/), and the build is
 **reproducible**: run `build.bat` and you get a byte-identical
