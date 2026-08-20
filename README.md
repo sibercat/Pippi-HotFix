@@ -1,4 +1,9 @@
-![Dashboard](https://github.com/sibercat/Pippi-HotFix/blob/main/docs/Broke.png) ![Dashboard](https://github.com/sibercat/Pippi-HotFix/blob/main/docs/Installed.png)
+<table>
+  <tr>
+    <td align="center"><img src="https://github.com/sibercat/Pippi-HotFix/blob/main/docs/Broke.png" width="400"></td>
+    <td align="center"><img src="https://github.com/sibercat/Pippi-HotFix/blob/main/docs/Installed.png" width="400"></td>
+  </tr>
+</table>
 
 ## Install
 
