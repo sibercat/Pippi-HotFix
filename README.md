@@ -25,7 +25,7 @@ Eight bytes each, same size, in a package header. No bytecode is modified and no
 
 ## Install
 
-**Easiest way — download `PippiHotFix.exe` from the
+**Easiest way — download `PippiHotFix-Installer.exe` from the
 [latest release](https://github.com/sibercat/Pippi-HotFix/releases/latest) and
 run it with the game closed.**
 
@@ -75,22 +75,22 @@ Nothing is lost: no character, building, or inventory data is touched.
 Pippi.pak         47,969,641 bytes
   sha256  2c3f49638decf3542f0c757b3a16f569a0576cbc39941890b149c30355e1521f
 
-PippiHotFix.exe       24,576 bytes
-  sha256  08362ac81bde78447ee425b0fef4c21a426ba5cfbc3a186f413b718b751649ea
+PippiHotFix-Installer.exe       25,600 bytes
+  sha256  7f7a496b6852170d9ebfae6e7ee31b989a9f352127724d1574a6a38d765083bb
 ```
 
 On Windows:
 
 ```
 certutil -hashfile Pippi.pak SHA256
-certutil -hashfile PippiHotFix.exe SHA256
+certutil -hashfile PippiHotFix-Installer.exe SHA256
 ```
 
 ### Don't trust me — rebuild the installer
 
 The installer's full source is in [`launcher/`](launcher/), and the build is
 **reproducible**: run `build.bat` and you get a byte-identical
-`PippiHotFix.exe` with exactly the SHA-256 above. If your rebuild matches, the
+`PippiHotFix-Installer.exe` with exactly the SHA-256 above. If your rebuild matches, the
 published exe provably contains nothing but the source you just read.
 
 Rebuilding needs any .NET SDK plus the .NET Framework 4.8 reference assemblies.
@@ -108,7 +108,7 @@ built into Windows 10 and 11.
 - Clears a dedicated server's `ExtractedMods` cache
 - **Restore original file** puts the stock pak back, for when Pippi is updated
   officially
-- `PippiHotFix.exe /check` prints the whole diagnosis as text, which is handy
+- `PippiHotFix-Installer.exe /check` prints the whole diagnosis as text, which is handy
   for helping someone over Discord
 
 It reads this repository's releases feed, so a future hot fix needs a new
