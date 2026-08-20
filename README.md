@@ -79,6 +79,32 @@ Rebuilding needs any .NET SDK plus the .NET Framework 4.8 reference assemblies.
 Running the installer needs neither — it targets the .NET Framework already
 built into Windows 10 and 11.
 
+## Antivirus and VirusTotal
+
+VirusTotal reports **2 detections out of 71** for the installer
+([scan](https://www.virustotal.com/gui/file/5a62448df7ef93124f30975f28efb8a5261d1ee6e8f5f74b9da0ee2b101f75db)).
+
+Both are machine-learning guesses — CrowdStrike Falcon's
+`Win/malicious_confidence_60%` and Elastic's `Malicious (moderate Confidence)`.
+Neither is a virus signature: no engine names a malware family, and no
+signature-based scanner flags the file at all.
+
+Why it happens is fair enough. The installer is a small unsigned program that
+downloads a file from the internet, writes it into a folder under Program Files,
+replaces a file there, and asks for administrator rights when Windows refuses
+the write. That is the same shape as a malware dropper, and these models score
+shape, not intent. Any installer of this kind trips them.
+
+The real fix is a code-signing certificate, which this project does not have.
+What you can do instead is verify it yourself: the full source is in
+[`launcher/`](launcher/) and the build is **reproducible**, so rebuilding gives a
+byte-identical file matching the SHA-256 above. If your rebuild matches, the
+download contains nothing but the source you just read — a stronger guarantee
+than most signed software offers.
+
+If you would rather not run a program at all, install by hand. Those
+instructions need no executable.
+
 ## What the installer does
 
 - Finds `Pippi.pak` across every Steam library, via the registry and
