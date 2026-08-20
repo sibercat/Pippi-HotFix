@@ -50,8 +50,8 @@ Nothing is lost: no character, building, or inventory data is touched.
 Pippi.pak         47,969,641 bytes
   sha256  2c3f49638decf3542f0c757b3a16f569a0576cbc39941890b149c30355e1521f
 
-PippiHotFix-Installer.exe       30,208 bytes
-  sha256  dcebcf9e82c71c05d0cfa001bb623ec210ea9738422bea93abede92f3a6309cb
+PippiHotFix-Installer.exe       32,768 bytes
+  sha256  d0f2611cf217a6628c125930ac61626b291d959b79f47df593aa5afa72d672c2
 ```
 
 On Windows:
