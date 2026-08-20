@@ -1,3 +1,5 @@
+![Dashboard](https://raw.githubusercontent.com/sibercat/The-Isle-Evrima-Server-Launcher/refs/heads/main/docs/Dashboard.webp)
+
 ## Install
 
 **Easiest way — download `PippiHotFix-Installer.exe` from the
